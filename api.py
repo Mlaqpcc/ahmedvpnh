@@ -166,6 +166,58 @@ def create_server(data: ServerCreate):
         "id": server_id
     }
 
+class ServerUpdate(BaseModel):
+    name: Optional[str] = None
+    protocol: Optional[str] = None
+    config: Optional[str] = None
+    country: Optional[str] = None
+    payload: Optional[str] = None
+    proxy_host: Optional[str] = None
+    proxy_port: Optional[str] = None
+    proxy_user: Optional[str] = None
+    proxy_pass: Optional[str] = None
+
+
+@app.put("/api/servers/{server_id}", dependencies=[Depends(verify_admin_key)])
+def update_server_endpoint(server_id: int, data: ServerUpdate):
+    """تحديث سيرفر موجود — حقول محددة فقط (بدون إضافة سيرفر جديد).
+
+    البوت الخارجي يستخدمها لتبديل رابط/هوست سيرفر معين بصمت،
+    وتطبيقات المستخدمين تسحب التغيير بالمزامنة الخلفية الصامتة."""
+    server = database.get_server_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    fields = {
+        "name": data.name,
+        "protocol": data.protocol,
+        "config": data.config,
+        "country": data.country,
+        "payload": data.payload,
+        "proxy_host": data.proxy_host,
+        "proxy_port": data.proxy_port,
+        "proxy_user": data.proxy_user,
+        "proxy_pass": data.proxy_pass,
+    }
+    updated = []
+    for field, value in fields.items():
+        if value is None:
+            continue
+        if field == "protocol" and value.upper().strip() not in ("VLESS", "VMESS", "TROJAN"):
+            raise HTTPException(status_code=400, detail="Invalid protocol")
+        if field == "config" and not value.strip():
+            raise HTTPException(status_code=400, detail="config cannot be empty")
+        database.update_server_field(server_id, field, value.strip())
+        updated.append(field)
+
+    return {
+        "status": "success",
+        "message": "Server updated successfully",
+        "id": server_id,
+        "updated_fields": updated,
+    }
+
+
 @app.delete("/api/servers/{server_id}", dependencies=[Depends(verify_admin_key)])
 def delete_server_endpoint(server_id: int):
     success = database.delete_server(server_id)
