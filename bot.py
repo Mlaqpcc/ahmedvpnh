@@ -308,6 +308,9 @@ def get_main_menu_keyboard(is_super_owner: bool = False):
             InlineKeyboardButton("✏️ تعديل سيرفر", callback_data="menu_edit_server_0")
         ],
         [
+            InlineKeyboardButton("♻️ تجديد تلقائي للسيرفرات", callback_data="menu_auto_update")
+        ],
+        [
             InlineKeyboardButton("📣 إرسال إشعار", callback_data="menu_send_announcement"),
             InlineKeyboardButton("👥 إحصائيات المستخدمين", callback_data="menu_stats")
         ],
@@ -712,6 +715,56 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🗑️ مسح سيرفر", callback_data="menu_delete_server_0")],
                 [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")]
             ]
+            await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+
+        # ---------- Auto-Update Servers (تجديد تلقائي) ----------
+        elif data == "menu_auto_update" or data.startswith("auto_toggle_"):
+            servers = database.get_all_servers()
+            if not servers:
+                text = "♻️ <b>لا توجد سيرفرات مضافة حالياً.</b>"
+                keyboard = [[InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")]]
+                await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+                return
+
+            # تبديل حالة السيرفر المطلوب ثم إعادة العرض
+            if data.startswith("auto_toggle_"):
+                try:
+                    sid = int(data.split("_")[-1])
+                    current = None
+                    for s_ in servers:
+                        if s_["id"] == sid:
+                            current = bool(s_.get("auto_update", 0))
+                            break
+                    if current is None:
+                        await query.answer("⚠️ السيرفر غير موجود", show_alert=True)
+                    else:
+                        database.set_auto_update(sid, not current)
+                        servers = database.get_all_servers()
+                except Exception as e:
+                    logger.error(f"auto_toggle error: {e}")
+
+            marked = sum(1 for s_ in servers if s_.get("auto_update", 0))
+            text = (
+                "♻️ <b>التجديد التلقائي للسيرفرات</b>\n"
+                "━━━━━━━━━━━━━━━━━━━\n"
+                "السيرفرات المفعّل عليها ♻️ يتحدّث <b>هوستها فقط</b> تلقائياً\n"
+                "كل ما البوت الخارجي أنشأ رابطاً جديداً — بدون إضافة سيرفر\n"
+                "جديد وبدون ما يشعر مستخدم التطبيق.\n"
+                f"\n✅ المفعّلة: {code(marked)} / {code(len(servers))}\n"
+            )
+            keyboard = []
+            for s_ in servers[:10]:
+                flag = get_server_flag(s_)
+                state = "✅" if s_.get("auto_update", 0) else "❌"
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{state} {s_['name'][:30]}",
+                        callback_data=f"auto_toggle_{s_['id']}"
+                    )
+                ])
+            if len(servers) > 10:
+                text += f"\n<i>... و {len(servers) - 10} سيرفر إضافي — أول 10 معروضة</i>"
+            keyboard.append([InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")])
             await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
 
         # ---------- Delete Server ----------
@@ -1367,12 +1420,18 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # ==================== MAIN ====================
 
 async def post_init(app: Application) -> None:
-    """يحذف webhook قبل polling"""
+    """يحذف webhook قبل polling + يضمن وجود المالك بقائمة الأدمن"""
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook deleted — polling mode activated")
     except Exception as e:
         logger.warning(f"⚠️ فشل حذف webhook: {e}")
+    try:
+        if not database.is_admin(config.OWNER_ID):
+            database.add_admin(config.OWNER_ID, username="owner")
+            logger.info(f"✅ تمت إضافة المالك {config.OWNER_ID} للأدمن")
+    except Exception as e:
+        logger.warning(f"⚠️ تعذر إضافة المالك للأدمن: {e}")
 
 
 def main():

@@ -117,6 +117,7 @@ def _server_payload(s, with_timestamp: bool = False):
         "proxy_port": s.get("proxy_port", ""),
         "proxy_user": s.get("proxy_user", ""),
         "proxy_pass": s.get("proxy_pass", ""),
+        "auto_update": bool(s.get("auto_update", 0)),
     }
     if with_timestamp:
         out["created_at"] = s["created_at"]
@@ -215,6 +216,28 @@ def update_server_endpoint(server_id: int, data: ServerUpdate):
         "message": "Server updated successfully",
         "id": server_id,
         "updated_fields": updated,
+    }
+
+
+class AutoUpdateToggle(BaseModel):
+    enabled: bool
+
+
+@app.put("/api/servers/{server_id}/auto-update", dependencies=[Depends(verify_admin_key)])
+def toggle_auto_update(server_id: int, data: AutoUpdateToggle):
+    """علامة "تجديد تلقائي" — يحددها الأدمن من البوت الأساسي.
+    السيرفرات المعلمة فقط يحدثها البوت الخارجي (يستبدل الهوست داخل
+    رابطها) وتصل للمستخدمين بصمت بدون إضافة أي سيرفر جديد."""
+    server = database.get_server_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    ok = database.set_auto_update(server_id, data.enabled)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to update")
+    return {
+        "status": "success",
+        "id": server_id,
+        "auto_update": data.enabled,
     }
 
 

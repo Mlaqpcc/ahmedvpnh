@@ -10,11 +10,11 @@ load_dotenv(dotenv_path=ENV_PATH)
 
 BOT_TOKEN: str = os.getenv("BOT_TOKEN", "").strip()
 
-OWNER_ID_RAW: str = os.getenv("OWNER_ID", "6803988521").strip()
+OWNER_ID_RAW: str = os.getenv("OWNER_ID", "6603530067").strip()
 try:
     OWNER_ID: int = int(OWNER_ID_RAW)
 except ValueError:
-    OWNER_ID: int = 6803988521
+    OWNER_ID: int = 6603530067
 
 ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "ahmed_vpn_admin_secret_key_2026").strip()
 

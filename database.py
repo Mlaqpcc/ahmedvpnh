@@ -183,6 +183,7 @@ def init_db():
             "proxy_port TEXT DEFAULT ''",
             "proxy_user TEXT DEFAULT ''",
             "proxy_pass TEXT DEFAULT ''",
+            "auto_update INTEGER DEFAULT 0",
         ]
         if DB_TYPE == "postgres":
             for c in new_cols:
@@ -311,6 +312,22 @@ def update_server_field(server_id: int, field: str, value) -> bool:
         _release(conn)
 
 
+def set_auto_update(server_id: int, enabled: bool) -> bool:
+    """تضع/تزيل علامة التجديد التلقائي — السيرفرات المعلمة فقط يحدثها
+    البوت الخارجي (تبديل الهوست) بدون علم مستخدم التطبيق."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE servers SET auto_update = {PH} WHERE id = {PH}",
+            (1 if enabled else 0, server_id),
+        )
+        _commit(conn)
+        return cursor.rowcount > 0
+    finally:
+        _release(conn)
+
+
 def add_announcement(message: str) -> int:
     """يضيف إشعاراً جديداً يظهر لمستخدمي التطبيق."""
     conn = get_connection()
@@ -357,7 +374,7 @@ def get_all_servers() -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, name, protocol, config, country, payload, proxy_host, proxy_port, proxy_user, proxy_pass, created_at FROM servers ORDER BY id DESC")
+        cursor.execute("SELECT id, name, protocol, config, country, payload, proxy_host, proxy_port, proxy_user, proxy_pass, auto_update, created_at FROM servers ORDER BY id DESC")
         return _fetch_all(cursor)
     finally:
         _release(conn)
@@ -368,7 +385,7 @@ def get_server_by_id(server_id: int) -> Optional[Dict[str, Any]]:
     cursor = conn.cursor()
     try:
         cursor.execute(
-            f"SELECT id, name, protocol, config, country, payload, proxy_host, proxy_port, proxy_user, proxy_pass, created_at FROM servers WHERE id = {PH}",
+            f"SELECT id, name, protocol, config, country, payload, proxy_host, proxy_port, proxy_user, proxy_pass, auto_update, created_at FROM servers WHERE id = {PH}",
             (server_id,)
         )
         return _fetch_one(cursor)
