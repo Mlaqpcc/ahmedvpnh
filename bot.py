@@ -136,6 +136,164 @@ def get_server_flag(server: dict) -> str:
     return flag or get_flag_for_name(server.get("name", ""))
 
 
+
+# ================= أدوات تعديل حقول رابط vless حقلًا حقلًا =================
+import urllib.parse as _up
+
+EDIT_FIELDS = {
+    "code": "الكود كامل (vless/vmess/trojan)",
+    "name": "الاسم",
+    "address": "العنوان (address)",
+    "host": "الهيدر Host",
+    "sni": "SNI",
+    "path": "المسار path",
+    "uuid": "UUID",
+    "port": "المنفذ",
+    "net": "الشبكة (ws/tcp)",
+    "tls": "TLS (تشغيل/إيقاف)",
+    "payload": "البايلود",
+    "proxy": "البروكسي host:port",
+    "proxyauth": "بيانات البروكسي user:pass",
+    "country": "الدولة",
+}
+
+
+def vless_parse(link: str) -> dict:
+    """تفكيك رابط vless إلى مكوّناته — يرفع ValueError إذا مو vless."""
+    if not link.lower().startswith("vless://"):
+        raise ValueError("not_vless")
+    body = link[len("vless://"):]
+    fragment = ""
+    if "#" in body:
+        body, fragment = body.split("#", 1)
+    query = ""
+    if "?" in body:
+        body, query = body.split("?", 1)
+    if "@" in body:
+        userinfo, hostport = body.rsplit("@", 1)
+    else:
+        userinfo, hostport = "", body
+    if ":" in hostport:
+        host, port = hostport.rsplit(":", 1)
+    else:
+        host, port = hostport, ""
+    params = {k: v[0] for k, v in _up.parse_qs(query, keep_blank_values=True).items()}
+    return {
+        "uuid": userinfo,
+        "host": host,
+        "port": port,
+        "params": params,
+        "name": _up.unquote(fragment) if fragment else "",
+    }
+
+
+def vless_build(d: dict) -> str:
+    """إعادة بناء رابط vless من مكوّناته."""
+    hostport = d.get("host", "") + (":" + d["port"] if d.get("port") else "")
+    out = f"vless://{d.get('uuid', '')}@{hostport}"
+    query = _up.urlencode(d.get("params", {}))
+    if query:
+        out += "?" + query
+    if d.get("name"):
+        out += "#" + _up.quote(d["name"])
+    return out
+
+
+def vless_apply_field(link: str, field: str, value: str) -> str:
+    """تعديل حقل واحد برابط vless وإرجاع الرابط الجديد."""
+    d = vless_parse(link)
+    p = dict(d.get("params", {}))
+    value = value.strip()
+    if field == "address":
+        d["host"] = value
+    elif field == "port":
+        if not value.isdigit():
+            raise ValueError("bad_port")
+        d["port"] = value
+    elif field == "uuid":
+        d["uuid"] = value
+    elif field == "host":
+        p["host"] = value
+    elif field == "sni":
+        p["sni"] = value
+    elif field == "path":
+        if not value.startswith("/"):
+            value = "/" + value
+        p["path"] = value
+    elif field == "net":
+        p["type"] = value
+    elif field == "tls":
+        if value.lower() in ("on", "tls", "yes", "true", "1", "تشغيل"):
+            p["security"] = "tls"
+        else:
+            p["security"] = "none"
+    elif field == "name":
+        d["name"] = value
+    else:
+        raise ValueError("bad_field")
+    d["params"] = p
+    return vless_build(d)
+
+
+def build_field_menu(server) -> str:
+    """نص قائمة تعديل الحقول مع القيم الحالية."""
+    flag = get_server_flag(server)
+    cfg = server.get("config", "") or ""
+    try:
+        d = vless_parse(cfg)
+        p = d.get("params", {})
+        proxy = "بدون"
+        if server.get("proxy_host"):
+            proxy = (server.get("proxy_host") or "") + (
+                ":" + server.get("proxy_port") if server.get("proxy_port") else ""
+            )
+        cur = (
+            f"🏷️ الاسم: <b>{esc(server.get('name', ''))}</b>\n"
+            f"🌐 العنوان: <code>{esc(d.get('host', ''))}</code>\n"
+            f"🔌 المنفذ: <code>{esc(str(d.get('port', '')))}</code>\n"
+            f"📡 Host: <code>{esc(p.get('host', 'بدون'))}</code>\n"
+            f"🔒 SNI: <code>{esc(p.get('sni', 'بدون'))}</code>\n"
+            f"🛤️ Path: <code>{esc(p.get('path', 'بدون'))}</code>\n"
+            f"🔗 TLS: <b>{'مفعّل' if p.get('security') == 'tls' else 'موقف'}</b>\n"
+            f"✍️ البايلود: <b>{'موجود' if server.get('payload') else 'بدون'}</b>\n"
+            f"🛰️ البروكسي: <b>{esc(proxy)}</b>\n"
+            f"🏳️ الدولة: <b>{esc(server.get('country') or 'بدون')}</b>"
+        )
+    except Exception:
+        cur = (
+            f"🔗 الكود: <code>{esc(cfg[:60])}…</code>\n"
+            "<i>التعديل حقلًا حقلًا متاح لروابط vless — لغيرها استخدم «كود كامل».</i>"
+        )
+    return (
+        f"✏️ <b>تعديل سيرفر:</b> {flag} <b>{esc(server['name'])}</b>\n\n"
+        f"{cur}\n\n"
+        "👇 <b>اختر الحقل الذي تريد تعديله</b> — ثم أرسل قيمته الجديدة فقط"
+    )
+
+
+def build_field_keyboard(server_id: int) -> list:
+    def cb(f):
+        return f"pik_efield_{server_id}_{f}"
+
+    return [
+        [InlineKeyboardButton("🔗 كود كامل", callback_data=cb("code")),
+         InlineKeyboardButton("🏷️ الاسم", callback_data=cb("name"))],
+        [InlineKeyboardButton("🌐 العنوان", callback_data=cb("address")),
+         InlineKeyboardButton("📡 Host", callback_data=cb("host"))],
+        [InlineKeyboardButton("🔒 SNI", callback_data=cb("sni")),
+         InlineKeyboardButton("🛤️ Path", callback_data=cb("path"))],
+        [InlineKeyboardButton("🧬 UUID", callback_data=cb("uuid")),
+         InlineKeyboardButton("🔌 المنفذ", callback_data=cb("port"))],
+        [InlineKeyboardButton("🔗 الشبكة", callback_data=cb("net")),
+         InlineKeyboardButton("🔐 TLS", callback_data=cb("tls"))],
+        [InlineKeyboardButton("✍️ البايلود", callback_data=cb("payload")),
+         InlineKeyboardButton("🛰️ البروكسي", callback_data=cb("proxy"))],
+        [InlineKeyboardButton("👤 بيانات البروكسي", callback_data=cb("proxyauth")),
+         InlineKeyboardButton("🏳️ الدولة", callback_data=cb("country"))],
+        [InlineKeyboardButton("🔙 إلغاء", callback_data="menu_edit_server_0")],
+    ]
+
+
 def get_main_menu_keyboard(is_super_owner: bool = False):
     keyboard = [
         [
@@ -150,6 +308,7 @@ def get_main_menu_keyboard(is_super_owner: bool = False):
             InlineKeyboardButton("✏️ تعديل سيرفر", callback_data="menu_edit_server_0")
         ],
         [
+            InlineKeyboardButton("📣 إرسال إشعار", callback_data="menu_send_announcement"),
             InlineKeyboardButton("👥 إحصائيات المستخدمين", callback_data="menu_stats")
         ],
         [
@@ -556,6 +715,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
 
         # ---------- Delete Server ----------
+        elif data == "menu_send_announcement":
+            last = database.get_latest_announcement()
+            last_line = ""
+            if last:
+                last_line = (
+                    f"\n📤 آخر إشعار (ID {code(last.get('id', 0))}):\n"
+                    f"<blockquote>{esc(last.get('message', '')[:300])}</blockquote>\n"
+                )
+            SESSIONS[user.id] = {"action": "send_announcement", "step": "message", "data": {}}
+            text = (
+                "📣 <b>إرسال إشعار لمستخدمي التطبيق</b>\n\n"
+                "أرسل الآن <b>نص الإشعار</b> — سيظهر لكل مستخدمي التطبيق "
+                "كإشعار نظام على هواتفهم حتى لو كان التطبيق مقفولاً.\n"
+                f"{last_line}\n"
+                "<i>مثال: تم تحديث السيرفر العراقي — حدّث القائمة من التطبيق 🔄</i>"
+            )
+            keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]
+            await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+
         elif data.startswith("menu_edit_server_"):
             page = int(data.split("_")[-1])
             servers = database.get_all_servers()
@@ -591,6 +769,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = f"✏️ <b>اختر سيرفر لتعديل كوده</b>\n(صفحة {page + 1})"
             await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
 
+        elif data.startswith("pik_efield_"):
+            parts = data.split("_")
+            server_id = int(parts[2])
+            field = parts[3]
+            server = database.get_server_by_id(server_id)
+            if not server:
+                await query.answer("السيرفر غير موجود!", show_alert=True)
+                return
+            label = EDIT_FIELDS.get(field, field)
+            hint = ""
+            if field == "code":
+                hint = "أرسل الرابط الكامل — الاسم يُؤخذ من الرابط إن وجد وإلا يبقى القديم."
+            elif field in ("payload", "proxy", "proxyauth"):
+                hint = "أرسل <code>-</code> للمسح."
+            elif field == "tls":
+                hint = "أرسل <code>on</code> للتشغيل أو <code>off</code> للإيقاف."
+            elif field == "net":
+                hint = "مثال: <code>ws</code> أو <code>tcp</code>"
+            elif field == "proxy":
+                hint = "أرسل بصيغة <code>host:port</code>"
+            elif field == "proxyauth":
+                hint = "أرسل بصيغة <code>user:pass</code>"
+            SESSIONS[user.id] = {
+                "action": "edit_server_field",
+                "step": "value",
+                "data": {"server_id": server_id, "field": field},
+            }
+            await query.answer()
+            text = (
+                f"✏️ <b>تعديل الحقل:</b> {label}\n\n"
+                f"{hint}\n\n"
+                "أرسل الآن <b>القيمة الجديدة فقط</b>:"
+            )
+            keyboard = [
+                [InlineKeyboardButton("⬅️ رجوع للحقول", callback_data=f"pick_edit_srv_{server_id}")],
+                [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")],
+            ]
+            await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+
         elif data.startswith("pick_edit_srv_"):
             server_id = int(data.split("_")[-1])
             server = database.get_server_by_id(server_id)
@@ -599,24 +816,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit(query, "السيرفر غير موجود.", get_main_menu_keyboard(is_super))
                 return
 
-            SESSIONS[user.id] = {
-                "action": "edit_server",
-                "step": "link",
-                "data": {"server_id": server_id, "name": server["name"], "protocol": server["protocol"]},
-            }
-            flag = get_server_flag(server)
-            has_pl = bool(server.get("payload"))
-            px = ""
-            if server.get("proxy_host"):
-                px = f"{server.get('proxy_host')}:{server.get('proxy_port')}"
-            text = (
-                f"✏️ <b>تعديل السيرفر:</b> {flag} <b>{esc(server['name'])}</b>\n\n"
-                "أرسل الآن <b>الكود الجديد</b> (<code>vless://...</code>):\n"
-                "<i>الاسم والدولة يبقيان كما هما — يتغير الكود والبايلود والبروكسي فقط.</i>\n\n"
-                f"✍️ البايلود الحالي: <b>{'موجود' if has_pl else 'بدون'}</b>\n"
-                f"🛰️ البروكسي الحالي: <b>{esc(px) if px else 'بدون'}</b>"
-            )
-            keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]
+            text = build_field_menu(server)
+            keyboard = build_field_keyboard(server_id)
             await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
 
         elif data.startswith("menu_delete_server_"):
@@ -805,100 +1006,142 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         text = update.message.text.strip()
         session = SESSIONS.get(user.id)
 
-        # 0) تعديل سيرفر — يجب أن يُعالج قبل روابط الإضافة المباشرة
-        if session and session.get("action") == "edit_server":
-            step = session.get("step")
+        # 0) تعديل حقل واحد من حقول السيرفر — قبل روابط الإضافة المباشرة
+        if session and session.get("action") == "edit_server_field":
             d = session.get("data", {})
+            server_id = d.get("server_id")
+            field = d.get("field")
+            server = database.get_server_by_id(server_id) if server_id else None
+            if not server:
+                SESSIONS.pop(user.id, None)
+                keyboard = [[InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")]]
+                await safe_reply(update.message, "⚠️ السيرفر لم يعد موجوداً.", InlineKeyboardMarkup(keyboard))
+                return
 
-            if step == "link":
+            label = EDIT_FIELDS.get(field, field)
+            cfg = server.get("config", "") or ""
+
+            if field == "code":
                 if not text.lower().startswith(("vless://", "vmess://", "trojan://")):
-                    await safe_reply(update.message, "❌ أرسل رابطاً صالحاً يبدأ بـ <code>vless://</code>")
+                    await safe_reply(
+                        update.message,
+                        "❌ أرسل رابطاً صالحاً يبدأ بـ <code>vless://</code> أو <code>vmess://</code> أو <code>trojan://</code>",
+                    )
                     return
-                d["config"] = text
-                d["protocol"] = "VLESS" if text.lower().startswith("vless://") else (
+                proto = "VLESS" if text.lower().startswith("vless://") else (
                     "VMESS" if text.lower().startswith("vmess://") else "TROJAN"
                 )
-                session["step"] = "payload"
-                prompt = (
-                    "✅ الكود الجديد: <b>تم استلامه ✓</b>\n\n"
-                    "✍️ <b>الخطوة 2 من 4 — البايلود</b>\n\n"
-                    "أرسل البايلود الجديد كاملاً، أو أرسل <code>-</code> ليصبح بدون بايلود"
+                new_name = server["name"]
+                if "#" in text:
+                    frag = text.split("#", 1)[1].strip()
+                    if frag:
+                        new_name = _up.unquote(frag)
+                database.update_server(
+                    server_id=server_id,
+                    name=new_name,
+                    protocol=proto,
+                    config=text,
+                    payload=server.get("payload", ""),
+                    proxy_host=server.get("proxy_host", ""),
+                    proxy_port=server.get("proxy_port", ""),
+                    proxy_user=server.get("proxy_user", ""),
+                    proxy_pass=server.get("proxy_pass", ""),
                 )
-                keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]
-                await safe_reply(update.message, prompt, InlineKeyboardMarkup(keyboard))
-                return
 
-            elif step == "payload":
-                d["payload"] = "" if text.strip() in ("-", "") else text
-                session["step"] = "proxy"
-                prompt = (
-                    "🛰️ <b>الخطوة 3 من 4 — البروكسي</b>\n\n"
-                    "أرسل البروكسي بصيغة <code>host:port</code>، أو أرسل <code>-</code> ليصبح بدون بروكسي"
+            elif field in ("address", "host", "sni", "path", "uuid", "port", "net", "tls"):
+                if not cfg.lower().startswith("vless://"):
+                    await safe_reply(
+                        update.message,
+                        f"❌ تعديل <b>{label}</b> حقلًا حقلًا متاح لروابط <code>vless</code> فقط — استخدم «كود كامل».",
+                    )
+                    return
+                try:
+                    new_cfg = vless_apply_field(cfg, field, text)
+                except ValueError as ve:
+                    if str(ve) == "bad_port":
+                        await safe_reply(update.message, "❌ المنفذ لازم يكون أرقاماً فقط.")
+                    else:
+                        await safe_reply(update.message, "❌ قيمة غير صالحة.")
+                    return
+                database.update_server_field(server_id, "config", new_cfg)
+
+            elif field == "name":
+                if cfg.lower().startswith("vless://"):
+                    try:
+                        new_cfg = vless_apply_field(cfg, "name", text)
+                        database.update_server_field(server_id, "config", new_cfg)
+                    except Exception:
+                        pass
+                database.update_server_field(server_id, "name", text.strip())
+
+            elif field == "payload":
+                database.update_server_field(
+                    server_id, "payload", "" if text.strip() in ("-", "") else text
                 )
-                keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]
-                await safe_reply(update.message, prompt, InlineKeyboardMarkup(keyboard))
-                return
 
-            elif step == "proxy":
-                import re as _re2
+            elif field == "proxy":
+                import re as _re_f
                 if text.strip() in ("-", ""):
-                    d["proxy_host"] = ""
-                    d["proxy_port"] = ""
+                    ph, pp = "", ""
                 else:
-                    m = _re2.match(r"^\s*([\w.\-]+)\s*[: ]\s*(\d{1,5})\s*$", text)
+                    m = _re_f.match(r"^\s*([\w.\-]+)\s*[: ]\s*(\d{1,5})\s*$", text)
                     if not m:
                         await safe_reply(
                             update.message,
                             "❌ صيغة غير صحيحة! أرسل <code>host:port</code> أو <code>-</code>",
                         )
                         return
-                    d["proxy_host"] = m.group(1)
-                    d["proxy_port"] = m.group(2)
-                session["step"] = "proxyauth"
-                prompt = (
-                    "🔐 <b>الخطوة 4 من 4 — بيانات البروكسي</b>\n\n"
-                    "أرسلها بصيغة <code>user:pass</code>، أو أرسل <code>-</code> بدون بيانات"
-                )
-                keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]
-                await safe_reply(update.message, prompt, InlineKeyboardMarkup(keyboard))
+                    ph, pp = m.group(1), m.group(2)
+                database.update_server_field(server_id, "proxy_host", ph)
+                database.update_server_field(server_id, "proxy_port", pp)
+
+            elif field == "proxyauth":
+                if text.strip() in ("-", ""):
+                    pu, pw = "", ""
+                elif ":" in text:
+                    pu, pw = text.split(":", 1)
+                else:
+                    pu, pw = text.strip(), ""
+                database.update_server_field(server_id, "proxy_user", pu.strip())
+                database.update_server_field(server_id, "proxy_pass", pw.strip())
+
+            elif field == "country":
+                database.update_server_field(server_id, "country", text.strip())
+
+            else:
+                SESSIONS.pop(user.id, None)
+                await safe_reply(update.message, "⚠️ حقل غير معروف.")
                 return
 
-            elif step == "proxyauth":
-                if text.strip() in ("-", ""):
-                    d["proxy_user"] = ""
-                    d["proxy_pass"] = ""
-                elif ":" in text:
-                    u, p = text.split(":", 1)
-                    d["proxy_user"] = u.strip()
-                    d["proxy_pass"] = p.strip()
-                else:
-                    d["proxy_user"] = text.strip()
-                    d["proxy_pass"] = ""
-                ok = database.update_server(
-                    server_id=d.get("server_id"),
-                    name=d.get("name", "Server"),
-                    protocol=d.get("protocol", "VLESS"),
-                    config=d.get("config", ""),
-                    payload=d.get("payload", ""),
-                    proxy_host=d.get("proxy_host", ""),
-                    proxy_port=d.get("proxy_port", ""),
-                    proxy_user=d.get("proxy_user", ""),
-                    proxy_pass=d.get("proxy_pass", ""),
-                )
-                SESSIONS.pop(user.id, None)
-                if ok:
-                    reply = (
-                        f"✅ <b>تم تحديث السيرفر</b> — {esc(d.get('name', ''))}\n\n"
-                        "📥 يظهر التعديل في التطبيق فور ضغط ↻ تحديث."
-                    )
-                else:
-                    reply = "⚠️ تعذر تحديث السيرفر — تأكد أنه ما زال موجوداً."
-                keyboard = [
-                    [InlineKeyboardButton("📋 عرض السيرفرات", callback_data="menu_list_servers")],
-                    [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")],
-                ]
-                await safe_reply(update.message, reply, InlineKeyboardMarkup(keyboard))
-                return
+            SESSIONS.pop(user.id, None)
+            reply = (
+                f"✅ <b>تم تحديث: {label}</b> — {esc(server['name'])}\n\n"
+                "📥 يظهر التعديل بالتطبيق فور ضغط ↻ تحديث."
+            )
+            keyboard = [
+                [InlineKeyboardButton("⬅️ تعديل حقول أخرى", callback_data=f"pick_edit_srv_{server_id}")],
+                [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")],
+            ]
+            await safe_reply(update.message, reply, InlineKeyboardMarkup(keyboard))
+            return
+
+        # 0.5) إرسال إشعار لمستخدمي التطبيق
+        if session and session.get("action") == "send_announcement":
+            aid = database.add_announcement(text)
+            SESSIONS.pop(user.id, None)
+            reply = (
+                f"📣 <b>تم إرسال الإشعار</b> ✅\n\n"
+                f"• ID: {code(aid)}\n"
+                f"• النص: <blockquote>{esc(text[:300])}</blockquote>\n\n"
+                "يظهر على هواتف المستخدمين خلال دقائق (يفحص التطبيق كل 30 دقيقة "
+                "وعند فتحه)."
+            )
+            keyboard = [
+                [InlineKeyboardButton("📣 إرسال آخر", callback_data="menu_send_announcement")],
+                [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")],
+            ]
+            await safe_reply(update.message, reply, InlineKeyboardMarkup(keyboard))
+            return
 
         # 1) روابط مباشرة
         if text.startswith(("vless://", "vmess://", "trojan://")):

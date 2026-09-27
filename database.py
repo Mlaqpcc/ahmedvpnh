@@ -154,6 +154,25 @@ def init_db():
         )
         """)
 
+    # جدول الإشعارات: إشعارات يرسلها الأدمن من البوت وتظهر
+    # لمستخدمي التطبيق كإشعار نظام حقيقي
+    if DB_TYPE == "postgres":
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS announcements (
+            id SERIAL PRIMARY KEY,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+    else:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
     # ترقية قواعد البيانات القديمة: إضافة أعمدة الدولة والبايلود والبروكسي
     # بدون فقدان أي سيرفرات موجودة
     try:
@@ -267,6 +286,69 @@ def update_server(
         )
         _commit(conn)
         return cursor.rowcount > 0
+    finally:
+        _release(conn)
+
+
+def update_server_field(server_id: int, field: str, value) -> bool:
+    """تحديث حقل واحد فقط من حقول السيرفر — لقائمة بيضاء أماناً."""
+    allowed = {
+        "name", "protocol", "config", "payload",
+        "proxy_host", "proxy_port", "proxy_user", "proxy_pass", "country",
+    }
+    if field not in allowed:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE servers SET {field} = {PH} WHERE id = {PH}",
+            (value, server_id),
+        )
+        _commit(conn)
+        return True
+    finally:
+        _release(conn)
+
+
+def add_announcement(message: str) -> int:
+    """يضيف إشعاراً جديداً يظهر لمستخدمي التطبيق."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if DB_TYPE == "postgres":
+            cursor.execute(
+                f"INSERT INTO announcements (message) VALUES ({PH}) RETURNING id",
+                (message.strip(),),
+            )
+            row = cursor.fetchone()
+            new_id = row[0]
+        else:
+            cursor.execute(
+                f"INSERT INTO announcements (message) VALUES ({PH})",
+                (message.strip(),),
+            )
+            new_id = cursor.lastrowid
+        _commit(conn)
+        return new_id
+    finally:
+        _release(conn)
+
+
+def get_latest_announcement() -> Optional[Dict[str, Any]]:
+    """آخر إشعار — ترجعه نقطة /api/notifications للتطبيق."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, message, created_at FROM announcements ORDER BY id DESC LIMIT 1")
+        row = _fetch_one(cursor)
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "message": row[1] or "",
+            "created_at": str(row[2]) if row[2] else "",
+        }
     finally:
         _release(conn)
 

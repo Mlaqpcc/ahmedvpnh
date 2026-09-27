@@ -77,6 +77,15 @@ def health():
 def stats():
     return database.get_system_stats()
 
+
+@app.get("/api/notifications")
+def notifications():
+    """آخر إشعار — التطبيق يفحصه دورياً ويعرض الجديد كإشعار نظام."""
+    ann = database.get_latest_announcement()
+    if not ann:
+        return {"id": 0, "message": ""}
+    return {"id": ann.get("id", 0), "message": ann.get("message", "")}
+
 @app.post("/api/user/ping")
 def ping_user(data: UserPing, request: Request):
     client_ip = request.client.host if request.client else "unknown"
