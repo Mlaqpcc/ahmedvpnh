@@ -232,6 +232,45 @@ def add_server(
         _release(conn)
 
 
+def update_server(
+    server_id: int,
+    name: str,
+    protocol: str,
+    config: str,
+    payload: str = "",
+    proxy_host: str = "",
+    proxy_port: str = "",
+    proxy_user: str = "",
+    proxy_pass: str = "",
+) -> bool:
+    """يحدّث كود السيرفر وإعداداته (البايلود/البروكسي) — الدولة تبقى كما هي."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        sql = (
+            f"UPDATE servers SET name = {PH}, protocol = {PH}, config = {PH}, payload = {PH}, "
+            f"proxy_host = {PH}, proxy_port = {PH}, proxy_user = {PH}, proxy_pass = {PH} WHERE id = {PH}"
+        )
+        cursor.execute(
+            sql,
+            (
+                name.strip(),
+                protocol.strip().upper(),
+                config.strip(),
+                (payload or "").strip(),
+                (proxy_host or "").strip(),
+                (proxy_port or "").strip(),
+                (proxy_user or "").strip(),
+                (proxy_pass or "").strip(),
+                server_id,
+            ),
+        )
+        _commit(conn)
+        return cursor.rowcount > 0
+    finally:
+        _release(conn)
+
+
 def get_all_servers() -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
