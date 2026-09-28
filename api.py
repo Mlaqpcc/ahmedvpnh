@@ -241,6 +241,43 @@ def toggle_auto_update(server_id: int, data: AutoUpdateToggle):
     }
 
 
+@app.get("/api/app-update")
+def get_app_update_endpoint():
+    """معلومات التحديث الإجباري — يفحصها التطبيق عند التشغيل وبالمزامنة."""
+    info = database.get_app_update()
+    if not info:
+        return {"enabled": False, "version_code": 0, "message": "", "url": ""}
+    return {
+        "enabled": bool(info.get("enabled", False)),
+        "version_code": int(info.get("version_code", 0) or 0),
+        "message": info.get("message", "") or "",
+        "url": info.get("url", "") or "",
+    }
+
+
+class AppUpdateSet(BaseModel):
+    enabled: bool = True
+    version_code: int
+    message: str = ""
+    url: str
+
+
+@app.put("/api/app-update", dependencies=[Depends(verify_admin_key)])
+def set_app_update_endpoint(data: AppUpdateSet):
+    """إعلان/تعديل التحديث الإجباري — من البوت الأساسي (أو يدوياً بالمفتاح)."""
+    if not data.url.strip().lower().startswith("http"):
+        raise HTTPException(status_code=400, detail="url must start with http")
+    if data.version_code <= 0:
+        raise HTTPException(status_code=400, detail="version_code must be > 0")
+    database.set_app_update(data.enabled, data.version_code, data.message.strip()[:500], data.url.strip())
+    return {
+        "status": "success",
+        "enabled": data.enabled,
+        "version_code": data.version_code,
+        "url": data.url.strip(),
+    }
+
+
 @app.delete("/api/servers/{server_id}", dependencies=[Depends(verify_admin_key)])
 def delete_server_endpoint(server_id: int):
     success = database.delete_server(server_id)

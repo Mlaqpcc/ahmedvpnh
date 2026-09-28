@@ -311,6 +311,9 @@ def get_main_menu_keyboard(is_super_owner: bool = False):
             InlineKeyboardButton("♻️ تجديد تلقائي للسيرفرات", callback_data="menu_auto_update")
         ],
         [
+            InlineKeyboardButton("🔔 تحديث إجباري للتطبيق", callback_data="menu_force_update")
+        ],
+        [
             InlineKeyboardButton("📣 إرسال إشعار", callback_data="menu_send_announcement"),
             InlineKeyboardButton("👥 إحصائيات المستخدمين", callback_data="menu_stats")
         ],
@@ -716,6 +719,68 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")]
             ]
             await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+
+        # ---------- Force Update (تحديث إجباري للتطبيق) ----------
+        elif data == "menu_force_update":
+            info = database.get_app_update() or {}
+            vc = info.get("version_code", 0) or 0
+            if info.get("enabled"):
+                head = (
+                    f"🟢 <b>مفعّل</b> — الإصدار {code(vc)}\n"
+                    f"🔗 {code(info.get('url', '') or '')}\n"
+                )
+            else:
+                head = "🔴 <b>غير مفعّل</b>\n"
+            text = (
+                "🔔 <b>التحديث الإجباري للتطبيق</b>\n"
+                "━━━━━━━━━━━━━━━━━━━\n"
+                f"{head}\n"
+                "عند التفعيل: كل مستخدم نسخته أقدم من الرقم المحدد تظهر\n"
+                "له نافذة إجبارية مع رابط التحميل، ولا يقدر يستخدم\n"
+                "التطبيق حتى يحدّث."
+            )
+            keyboard = [
+                [InlineKeyboardButton("➕ إعلان تحديث جديد", callback_data="fu_start")],
+                [InlineKeyboardButton("🔴 إيقاف التحديث الإجباري", callback_data="fu_stop")],
+                [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")]
+            ]
+            await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+
+        elif data == "fu_stop":
+            info = database.get_app_update() or {}
+            try:
+                database.set_app_update(
+                    False,
+                    info.get("version_code", 0) or 0,
+                    info.get("message", "") or "",
+                    info.get("url", "") or "",
+                )
+            except Exception as e:
+                logger.error(f"fu_stop error: {e}")
+            await query.answer("✅ تم إيقاف التحديث الإجباري", show_alert=True)
+            info2 = database.get_app_update() or {}
+            text = (
+                "🔔 <b>التحديث الإجباري للتطبيق</b>\n"
+                "━━━━━━━━━━━━━━━━━━━\n"
+                f"🔴 <b>غير مفعّل</b> — آخر إصدار معلن: {code(info2.get('version_code', 0) or 0)}\n\n"
+                "المستخدمون يقدرون يستخدمون التطبيق طبيعي الآن."
+            )
+            keyboard = [
+                [InlineKeyboardButton("➕ إعلان تحديث جديد", callback_data="fu_start")],
+                [InlineKeyboardButton("🔙 القائمة", callback_data="menu_main")]
+            ]
+            await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
+
+        elif data == "fu_start":
+            SESSIONS[user.id] = {"action": "force_update", "step": "version_code", "data": {}}
+            text = (
+                "🔔 <b>إعلان تحديث إجباري — خطوة 1 من 3</b>\n\n"
+                "أرسل <b>رقم الإصدار الجديد</b> (مثال: <code>79</code>)\n"
+                "كل مستخدم نسخته أقل من هذا الرقم تظهر له النافذة الإجبارية.\n\n"
+                "<i>للإلغاء أرسل /cancel</i>"
+            )
+            await safe_edit(query, text, InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]))
 
         # ---------- Auto-Update Servers (تجديد تلقائي) ----------
         elif data == "menu_auto_update" or data.startswith("auto_toggle_"):
@@ -1273,6 +1338,59 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         # 2) إضافة أدمن
+        # 2.5) التحديث الإجباري — wizard
+        if session and session.get("action") == "force_update":
+            step = session.get("step")
+            d = session.get("data", {})
+
+            if step == "version_code":
+                try:
+                    vc = int(text.strip())
+                    if vc <= 0:
+                        raise ValueError()
+                except ValueError:
+                    await safe_reply(update.message, "❌ أرسل رقماً صحيحاً أكبر من صفر (مثال: 79)")
+                    return
+                d["version_code"] = vc
+                session["step"] = "url"
+                await safe_reply(
+                    update.message,
+                    f"✅ رقم الإصدار: {code(vc)}\n\n"
+                    "🔔 <b>خطوة 2 من 3</b> — أرسل <b>رابط تحميل الـ APK</b>\n"
+                    "(يبدأ بـ http — مثال: رابط تليجرام أو أي مركز تحميل)"
+                )
+                return
+
+            if step == "url":
+                if not text.lower().startswith(("http://", "https://")):
+                    await safe_reply(update.message, "❌ الرابط لازم يبدأ بـ http أو https — أعد الإرسال")
+                    return
+                d["url"] = text
+                session["step"] = "message"
+                await safe_reply(
+                    update.message,
+                    "✅ الرابط تم.\n\n"
+                    "🔔 <b>خطوة 3 من 3</b> — أرسل <b>نص الرسالة</b> اللي تشوفها للمستخدم بالضبط،\n"
+                    "أو أرسل <code>-</code> للنص الافتراضي."
+                )
+                return
+
+            if step == "message":
+                msg_text = "" if text.strip() == "-" else text[:500]
+                vc = d.get("version_code", 0)
+                u = d.get("url", "")
+                ok = database.set_app_update(True, vc, msg_text, u)
+                SESSIONS.pop(user.id, None)
+                reply = (
+                    ("✅ <b>تم تفعيل التحديث الإجباري!</b>\n" if ok else "⚠️ <b>فشل الحفظ</b>\n")
+                    + f"• الإصدار المطلوب: {code(vc)}\n"
+                    + f"• الرابط: {code(u)}\n"
+                    + (f"• الرسالة: {esc(msg_text)}" if msg_text else "• الرسالة: النص الافتراضي")
+                )
+                keyboard = [[InlineKeyboardButton("🔔 شاشة التحديث", callback_data="menu_force_update")]]
+                await safe_reply(update.message, reply, InlineKeyboardMarkup(keyboard))
+                return
+
         if session and session.get("action") == "add_admin":
             try:
                 target_id = int(text.replace(" ", "").replace("@", ""))

@@ -173,6 +173,12 @@ def init_db():
         )
         """)
 
+    # جدول التحديث الإجباري للتطبيق
+    try:
+        init_app_update_table(cursor)
+    except Exception as e:
+        print(f"[DB] ⚠️ app_update table skipped: {e}")
+
     # ترقية قواعد البيانات القديمة: إضافة أعمدة الدولة والبايلود والبروكسي
     # بدون فقدان أي سيرفرات موجودة
     try:
@@ -368,6 +374,67 @@ def get_latest_announcement() -> Optional[Dict[str, Any]]:
         }
     finally:
         _release(conn)
+
+
+def get_app_update() -> Optional[Dict[str, Any]]:
+    """معلومات التحديث الإجباري للتطبيق — سجل واحد (id=1)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT enabled, version_code, message, url FROM app_update WHERE id = 1")
+        return _fetch_one(cursor)
+    finally:
+        _release(conn)
+
+
+def set_app_update(enabled: bool, version_code: int, message: str, url: str) -> bool:
+    """حفظ إعدادات التحديث الإجباري (سجل واحد — upsert)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if DB_TYPE == "postgres":
+            cursor.execute(
+                f"INSERT INTO app_update (id, enabled, version_code, message, url) "
+                f"VALUES (1, {PH}, {PH}, {PH}, {PH}) "
+                f"ON CONFLICT (id) DO UPDATE SET "
+                f"enabled = EXCLUDED.enabled, version_code = EXCLUDED.version_code, "
+                f"message = EXCLUDED.message, url = EXCLUDED.url",
+                (enabled, version_code, message, url),
+            )
+        else:
+            cursor.execute(
+                f"INSERT OR REPLACE INTO app_update (id, enabled, version_code, message, url) "
+                f"VALUES (1, {PH}, {PH}, {PH}, {PH})",
+                (enabled, version_code, message, url),
+            )
+        _commit(conn)
+        return True
+    finally:
+        _release(conn)
+
+
+def init_app_update_table(cursor):
+    """إنشاء جدول التحديث الإجباري إن لم يكن موجوداً (كلا نوعي القاعدة)."""
+    if DB_TYPE == "postgres":
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_update (
+            id INT PRIMARY KEY,
+            enabled BOOLEAN DEFAULT FALSE,
+            version_code INT DEFAULT 0,
+            message TEXT DEFAULT '',
+            url TEXT DEFAULT ''
+        )
+        """)
+    else:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_update (
+            id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0,
+            version_code INTEGER DEFAULT 0,
+            message TEXT DEFAULT '',
+            url TEXT DEFAULT ''
+        )
+        """)
 
 
 def get_all_servers() -> List[Dict[str, Any]]:
