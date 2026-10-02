@@ -141,7 +141,7 @@ def get_server_flag(server: dict) -> str:
 import urllib.parse as _up
 
 EDIT_FIELDS = {
-    "code": "الكود كامل (vless/vmess/trojan)",
+    "code": "الكود كامل (vless/vmess/trojan/ssh)",
     "name": "الاسم",
     "address": "العنوان (address)",
     "host": "الهيدر Host",
@@ -481,6 +481,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== ADD SERVER FINALIZE ====================
 
+def parse_darktunnel_name(line: str):
+    """يستخرج اسم السيرفر من رابط darktunnel:// (Base64 JSON)."""
+    try:
+        import base64 as _b64
+        import json as _json
+        b64 = line[len("darktunnel://"):].strip()
+        data = _json.loads(
+            _b64.b64decode(b64 + "=" * (-len(b64) % 4)).decode("utf-8", "replace")
+        )
+        name = (data.get("name") or "").strip()
+        return name[:60] if name else None
+    except Exception:
+        return None
+
+
 def add_server_finalize(user_id: int) -> str:
     """يحفظ السيرفر مع الدولة/البايلود/البروكسي من الجلسة ويعيد ملخصاً."""
     session = SESSIONS.pop(user_id, None)
@@ -584,7 +599,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "أرسل الآن <b>اسم السيرفر</b>:\n"
                 "<i>(مثال: Iraq 01)</i>\n\n"
                 "💡 أو أرسل رابط مباشر (<code>vless://...</code>, "
-                "<code>vmess://...</code>, <code>trojan://...</code>)"
+                "<code>vmess://...</code>, <code>trojan://...</code>, <code>ssh://...</code>)"
             )
             keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]]
             await safe_edit(query, text, InlineKeyboardMarkup(keyboard))
@@ -1140,15 +1155,15 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             cfg = server.get("config", "") or ""
 
             if field == "code":
-                if not text.lower().startswith(("vless://", "vmess://", "trojan://")):
+                if not text.lower().startswith(("vless://", "vmess://", "trojan://", "ssh://")):
                     await safe_reply(
                         update.message,
-                        "❌ أرسل رابطاً صالحاً يبدأ بـ <code>vless://</code> أو <code>vmess://</code> أو <code>trojan://</code>",
+                        "❌ أرسل رابطاً صالحاً يبدأ بـ <code>vless://</code> أو <code>vmess://</code> أو <code>trojan://</code> أو <code>ssh://</code>",
                     )
                     return
-                proto = "VLESS" if text.lower().startswith("vless://") else (
-                    "VMESS" if text.lower().startswith("vmess://") else "TROJAN"
-                )
+                proto = ("SSH" if text.lower().startswith("ssh://") else
+                    ("VLESS" if text.lower().startswith("vless://") else (
+                    "VMESS" if text.lower().startswith("vmess://") else "TROJAN")))
                 new_name = server["name"]
                 if "#" in text:
                     frag = text.split("#", 1)[1].strip()
@@ -1262,17 +1277,21 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         # 1) روابط مباشرة
-        if text.startswith(("vless://", "vmess://", "trojan://")):
+        if text.startswith(("vless://", "vmess://", "trojan://", "darktunnel://", "ssh://")):
             lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
             # --- رابط واحد: معالج كامل (الدولة ← البايلود ← البروكسي) ---
             if len(lines) == 1:
                 line = lines[0]
-                proto = "VLESS" if line.startswith("vless://") else (
-                    "VMESS" if line.startswith("vmess://") else "TROJAN"
-                )
+                proto = ("SSH" if line.startswith("ssh://") else
+                    ("VLESS" if line.startswith(("vless://", "darktunnel://")) else (
+                    "VMESS" if line.startswith("vmess://") else "TROJAN")))
                 name = f"Server {database.get_servers_count() + 1}"
-                if "#" in line:
+                if line.startswith("darktunnel://"):
+                    dt_name = parse_darktunnel_name(line)
+                    if dt_name:
+                        name = dt_name
+                elif "#" in line:
                     try:
                         remark = unquote(line.split("#")[-1]).strip()
                         if remark:
@@ -1305,11 +1324,15 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             proto = "VLESS"
 
             for line in lines:
-                proto = "VLESS" if line.startswith("vless://") else (
-                    "VMESS" if line.startswith("vmess://") else "TROJAN"
-                )
+                proto = ("SSH" if line.startswith("ssh://") else
+                    ("VLESS" if line.startswith(("vless://", "darktunnel://")) else (
+                    "VMESS" if line.startswith("vmess://") else "TROJAN")))
                 name = f"Server {database.get_servers_count() + 1}"
-                if "#" in line:
+                if line.startswith("darktunnel://"):
+                    dt_name = parse_darktunnel_name(line)
+                    if dt_name:
+                        name = dt_name
+                elif "#" in line:
                     try:
                         remark = unquote(line.split("#")[-1]).strip()
                         if remark:
@@ -1430,7 +1453,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     [
                         InlineKeyboardButton("VLESS", callback_data="set_proto_VLESS"),
                         InlineKeyboardButton("VMESS", callback_data="set_proto_VMESS"),
-                        InlineKeyboardButton("TROJAN", callback_data="set_proto_TROJAN")
+                        InlineKeyboardButton("TROJAN", callback_data="set_proto_TROJAN"),
+                        InlineKeyboardButton("SSH", callback_data="set_proto_SSH")
                     ],
                     [InlineKeyboardButton("🔙 إلغاء", callback_data="menu_main")]
                 ]
@@ -1439,7 +1463,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
             elif step == "config":
                 proto = session["data"].get("protocol", "VLESS").lower()
-                if not text.lower().startswith(proto + "://"):
+                if not text.lower().startswith((proto + "://", "darktunnel://")):
                     await safe_reply(
                         update.message,
                         f"❌ الرابط يجب أن يبدأ بـ {code(proto + '://')}\nأرسله مرة أخرى:",
