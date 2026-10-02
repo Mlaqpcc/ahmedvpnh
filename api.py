@@ -145,7 +145,7 @@ def get_single_server(server_id: int):
 
 @app.post("/api/servers", dependencies=[Depends(verify_admin_key)])
 def create_server(data: ServerCreate):
-    valid_protocols = ["VLESS", "VMESS", "TROJAN"]
+    valid_protocols = ["VLESS", "VMESS", "TROJAN", "SSH"]
     proto = data.protocol.upper().strip()
     if proto not in valid_protocols:
         raise HTTPException(status_code=400, detail=f"Invalid protocol. Must be one of: {valid_protocols}")
@@ -204,7 +204,7 @@ def update_server_endpoint(server_id: int, data: ServerUpdate):
     for field, value in fields.items():
         if value is None:
             continue
-        if field == "protocol" and value.upper().strip() not in ("VLESS", "VMESS", "TROJAN"):
+        if field == "protocol" and value.upper().strip() not in ("VLESS", "VMESS", "TROJAN", "SSH"):
             raise HTTPException(status_code=400, detail="Invalid protocol")
         if field == "config" and not value.strip():
             raise HTTPException(status_code=400, detail="config cannot be empty")
